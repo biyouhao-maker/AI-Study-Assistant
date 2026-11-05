@@ -93,6 +93,7 @@ async function apiRequest(path, options = {}) {
     if (!response.ok) {
         throw new Error(
             data?.detail ||
+            data?.error ||
             data?.message ||
             `请求失败，状态码：${response.status}`
         );

@@ -6,8 +6,10 @@ from io import BytesIO
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from openai import OpenAI
 from pypdf import PdfReader
 from docx import Document
@@ -29,7 +31,54 @@ load_dotenv(BACKEND_DIR / ".env")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI Study Assistant")
+# API 文档默认开启（本地开发用）；生产环境建议设置 ENABLE_DOCS=0 关闭
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "1") == "1"
+
+app = FastAPI(
+    title="AI Study Assistant",
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None
+)
+
+# 全局请求体大小限制（10MB 上传留余量，防止超大 JSON 请求耗尽内存）
+MAX_REQUEST_BODY = 12 * 1024 * 1024
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+
+    content_length = request.headers.get("content-length")
+
+    if (
+        content_length
+        and content_length.isdigit()
+        and int(content_length) > MAX_REQUEST_BODY
+    ):
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "请求内容过大。"}
+        )
+
+    return await call_next(request)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc):
+
+    logger.warning(
+        "参数校验失败: %s",
+        [
+            (error["loc"], error["type"])
+            for error in exc.errors()
+        ]
+    )
+
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "请求参数不合法，请检查后重试。"}
+    )
+
 
 # 请求频率限制（按 IP 计数，内存存储，单进程有效）
 limiter = Limiter(key_func=get_remote_address)
@@ -39,6 +88,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 UPLOAD_MAX_SIZE = 10 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 30000
 
+# 限流参数可通过环境变量或 backend/.env 配置
+AI_RATE_LIMIT = os.getenv("AI_RATE_LIMIT", "10/minute")
+UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "20/minute")
+
 AI_MODEL = "deepseek-flash"
 
 
@@ -46,45 +99,80 @@ AI_MODEL = "deepseek-flash"
 # 2. 请求数据模型
 # ==================================================
 
+class ChatHistoryItem(BaseModel):
+    role: str = Field(max_length=20)
+    content: str = Field(max_length=4000)
+
+
 class ChatRequest(BaseModel):
-    message: str
-    history: list[dict[str, str]] = Field(default_factory=list)
-    document_text: str = ""
-    document_name: str = ""
-    learning_mode: str = "basic"
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ChatHistoryItem] = Field(
+        default_factory=list,
+        max_length=50
+    )
+    document_text: str = Field(default="", max_length=30000)
+    document_name: str = Field(default="", max_length=200)
+    learning_mode: str = Field(default="basic", max_length=20)
 
 
 class QuizRequest(BaseModel):
-    document_text: str
-    document_name: str = "学习资料"
+    document_text: str = Field(max_length=30000)
+    document_name: str = Field(default="学习资料", max_length=200)
     count: int = Field(default=5, ge=1, le=10)
 
 
 class WrongAnswerItem(BaseModel):
-    question: str
-    options: dict[str, str] = Field(default_factory=dict)
-    correct_answer: str
-    user_answer: str
-    explanation: str = ""
+    question: str = Field(max_length=2000)
+    options: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=10
+    )
+    correct_answer: str = Field(max_length=200)
+    user_answer: str = Field(max_length=200)
+    explanation: str = Field(default="", max_length=4000)
+
+    @field_validator("options")
+    @classmethod
+    def limit_options_size(cls, value):
+
+        if len(json.dumps(value, ensure_ascii=False)) > 3000:
+            raise ValueError("选项内容过长。")
+
+        return value
 
 
 class DiagnoseRequest(BaseModel):
-    wrong_answers: list[WrongAnswerItem]
+    wrong_answers: list[WrongAnswerItem] = Field(max_length=50)
 
 
 class KnowledgeStatsRequest(BaseModel):
-    records: list[dict] = Field(default_factory=list)
+    records: list[dict] = Field(
+        default_factory=list,
+        max_length=1000
+    )
 
 
 class StudyPlanRequest(BaseModel):
-    records: list[dict] = Field(default_factory=list)
-    diagnoses: list[dict] = Field(default_factory=list)
-    wrongbook: list[dict] = Field(default_factory=list)
+    records: list[dict] = Field(
+        default_factory=list,
+        max_length=1000
+    )
+    diagnoses: list[dict] = Field(
+        default_factory=list,
+        max_length=200
+    )
+    wrongbook: list[dict] = Field(
+        default_factory=list,
+        max_length=500
+    )
 
     days: int = Field(default=7, ge=1, le=14)
     daily_minutes: int = Field(default=60, ge=15, le=240)
 
-    goal: str = "巩固薄弱知识点"
+    goal: str = Field(
+        default="巩固薄弱知识点",
+        max_length=200
+    )
 
 
 # ==================================================
@@ -246,8 +334,8 @@ async def health_check():
 # ==================================================
 
 @app.post("/api/chat")
-@limiter.limit("10/minute")
-async def chat(request: Request, payload: ChatRequest):
+@limiter.limit(AI_RATE_LIMIT)
+def chat(request: Request, payload: ChatRequest):
 
     if not payload.message.strip():
         raise HTTPException(
@@ -309,14 +397,11 @@ async def chat(request: Request, payload: ChatRequest):
 
     for item in payload.history[-20:]:
 
-        role = item.get("role")
-        content = item.get("content")
-
-        if role in ["user", "assistant"] and isinstance(content, str):
+        if item.role in ["user", "assistant"]:
 
             messages.append({
-                "role": role,
-                "content": content
+                "role": item.role,
+                "content": item.content
             })
 
     messages.append({
@@ -364,7 +449,7 @@ async def chat(request: Request, payload: ChatRequest):
 
 
 @app.post("/api/upload")
-@limiter.limit("20/minute")
+@limiter.limit(UPLOAD_RATE_LIMIT)
 async def upload_document(request: Request, file: UploadFile = File(...)):
 
     try:
@@ -539,8 +624,8 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
 # ==================================================
 
 @app.post("/api/quiz")
-@limiter.limit("10/minute")
-async def generate_quiz(request: Request, payload: QuizRequest):
+@limiter.limit(AI_RATE_LIMIT)
+def generate_quiz(request: Request, payload: QuizRequest):
 
     if not payload.document_text.strip():
         raise HTTPException(
@@ -670,8 +755,8 @@ async def generate_quiz(request: Request, payload: QuizRequest):
 # ==================================================
 
 @app.post("/api/diagnose")
-@limiter.limit("10/minute")
-async def diagnose_wrong_answers(request: Request, payload: DiagnoseRequest):
+@limiter.limit(AI_RATE_LIMIT)
+def diagnose_wrong_answers(request: Request, payload: DiagnoseRequest):
 
     if not payload.wrong_answers:
         raise HTTPException(
@@ -919,8 +1004,8 @@ async def learning_recommendations(request: KnowledgeStatsRequest):
 # ==================================================
 
 @app.post("/api/study-plan")
-@limiter.limit("10/minute")
-async def generate_study_plan(request: Request, payload: StudyPlanRequest):
+@limiter.limit(AI_RATE_LIMIT)
+def generate_study_plan(request: Request, payload: StudyPlanRequest):
 
     try:
 
@@ -1068,6 +1153,51 @@ async def generate_study_plan(request: Request, payload: StudyPlanRequest):
                     1,
                     min(duration, 240)
                 )
+
+            # 保证每天任务总时长不超过用户设定的每日学习时间
+            day_total = sum(
+                t.get("duration_minutes", 0)
+                for t in tasks
+                if isinstance(t, dict)
+            )
+
+            if day_total > payload.daily_minutes:
+
+                scale = payload.daily_minutes / day_total
+
+                for t in tasks:
+
+                    if isinstance(t, dict):
+
+                        t["duration_minutes"] = max(
+                            1,
+                            round(
+                                t["duration_minutes"] * scale
+                            )
+                        )
+
+                # 修正按比例缩放取整后仍可能存在的少量超出
+                overflow = sum(
+                    t.get("duration_minutes", 0)
+                    for t in tasks
+                    if isinstance(t, dict)
+                ) - payload.daily_minutes
+
+                while overflow > 0:
+
+                    longest = max(
+                        (
+                            t for t in tasks
+                            if isinstance(t, dict)
+                        ),
+                        key=lambda t: t["duration_minutes"]
+                    )
+
+                    if longest["duration_minutes"] <= 1:
+                        break
+
+                    longest["duration_minutes"] -= 1
+                    overflow -= 1
 
         plan["title"] = str(
             plan.get("title") or "个性化学习计划"
