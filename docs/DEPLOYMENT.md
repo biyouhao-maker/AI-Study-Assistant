@@ -77,7 +77,25 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-
 
 当前日志输出到控制台（uvicorn/stderr）。生产环境由平台收集，或自管时重定向到文件并配置轮转（如 `logrotate`）。日志内容不含密钥与用户学习资料。
 
-## 五、已知限制（上线前须知）
+## 五、PaaS 平台快速部署（以 Render 免费档为例，零费用）
+
+仓库已内置 `Procfile` 和 `.python-version`，Render/Railway 等平台可直接识别启动命令。
+
+1. 用 GitHub 账号登录 https://render.com
+2. **New → Web Service** → 授权并选择仓库 `biyouhao-maker/AI-Study-Assistant`（需先把仓库设为对 Render 可见，或临时改为 Public 后再改回 Private）
+3. 配置（多数自动识别）：
+   - Runtime: Python 3
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: 来自 Procfile（`uvicorn backend.main:app --host 0.0.0.0 --port $PORT ...`）
+4. **环境变量**（在 Render 后台填写，绝不写进仓库）：
+   - `DEEPSEEK_API_KEY` = 你的真实密钥
+   - `ENABLE_DOCS` = `0`
+5. **Create Web Service** → 等待构建完成 → 得到 `https://<名称>.onrender.com`
+6. 以后每次 `git push`，平台自动重新部署
+
+免费档注意：15 分钟无访问会休眠，下次访问需等待约 30 秒；单实例，与本项目内存限流兼容。
+
+## 六、已知限制（上线前须知）
 
 | 项目 | 状态 |
 |---|---|
