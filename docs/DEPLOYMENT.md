@@ -82,7 +82,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-
 仓库已内置 `Procfile` 和 `.python-version`，Render/Railway 等平台可直接识别启动命令。
 
 1. 用 GitHub 账号登录 https://render.com
-2. **New → Web Service** → 授权并选择仓库 `biyouhao-maker/AI-Study-Assistant`（需先把仓库设为对 Render 可见，或临时改为 Public 后再改回 Private）
+2. **New → Web Service** → 授权安装 Render 的 GitHub 应用时，选择 `biyouhao-maker/AI-Study-Assistant`（**私有仓库可直接授权，无需改 Public**）
 3. 配置（多数自动识别）：
    - Runtime: Python 3
    - Build Command: `pip install -r requirements.txt`
