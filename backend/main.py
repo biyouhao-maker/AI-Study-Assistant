@@ -92,7 +92,40 @@ MAX_DOCUMENT_CHARS = 30000
 AI_RATE_LIMIT = os.getenv("AI_RATE_LIMIT", "10/minute")
 UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "20/minute")
 
-AI_MODEL = "deepseek-flash"
+# AI 厂商注册表（仅支持 OpenAI 兼容接口的厂商，不允许用户自定义接口地址）
+PROVIDER_REGISTRY = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-flash",
+        "extra_body": {"thinking": {"type": "disabled"}}
+    },
+    "moonshot": {
+        "label": "Kimi（月之暗面）",
+        "base_url": "https://api.moonshot.cn/v1",
+        "model": "moonshot-v1-8k"
+    },
+    "qwen": {
+        "label": "通义千问",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus"
+    },
+    "siliconflow": {
+        "label": "硅基流动",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "model": "deepseek-ai/DeepSeek-V3"
+    },
+    "zhipu": {
+        "label": "智谱 GLM",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4-flash"
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "deepseek/deepseek-chat"
+    }
+}
 
 
 # ==================================================
@@ -179,12 +212,23 @@ class StudyPlanRequest(BaseModel):
 # 3. DeepSeek API
 # ==================================================
 
-def normalize_user_api_key(raw_value):
+def normalize_user_api_key(raw_value, provider="deepseek"):
 
     if not raw_value:
         return None
 
     value = raw_value.strip()
+
+    if provider == "zhipu":
+
+        # 智谱密钥形如 id.secret，兼容用户整行粘贴
+        if "=" in value:
+            value = value.split("=", 1)[1].strip()
+
+        if len(value) < 16 or "." not in value:
+            return None
+
+        return value
 
     marker = value.find("sk-")
 
@@ -197,50 +241,110 @@ def normalize_user_api_key(raw_value):
     return value
 
 
-def get_ai_client(user_api_key=None):
+def get_ai_client(user_api_key=None, provider_config=None):
 
     if not user_api_key:
         raise HTTPException(
             status_code=401,
-            detail="请先在页面右上角“API 设置”中填入你自己的 DeepSeek API 密钥。"
+            detail="请先在页面右上角“API 设置”中填入你自己的 API 密钥。"
         )
+
+    base_url = (
+        provider_config["base_url"]
+        if provider_config
+        else "https://api.deepseek.com"
+    )
 
     return OpenAI(
         api_key=user_api_key,
-        base_url="https://api.deepseek.com"
+        base_url=base_url
     )
 
 
-def call_ai_json(client, system_prompt, user_prompt):
+def resolve_ai_context(request):
 
-    response = client.chat.completions.create(
-        model=AI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
-                "role": "user",
-                "content": user_prompt
-            }
-        ],
-        response_format={
-            "type": "json_object"
+    provider_name = (
+        request.headers.get("x-ai-provider") or "deepseek"
+    ).strip().lower()
+
+    config = PROVIDER_REGISTRY.get(provider_name)
+
+    if not config:
+        supported = "、".join(PROVIDER_REGISTRY.keys())
+        raise HTTPException(
+            status_code=400,
+            detail=f"暂不支持该 AI 厂商：{provider_name}。当前支持：{supported}。"
+        )
+
+    raw_key = request.headers.get("x-user-api-key")
+    user_api_key = normalize_user_api_key(raw_key, provider_name)
+
+    if raw_key and not user_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="API 密钥格式不正确，请检查后重新填写。"
+        )
+
+    return provider_name, user_api_key, config
+
+
+def parse_ai_json(content):
+
+    text = content.strip()
+
+    # 兼容部分厂商用 Markdown 代码块包裹 JSON 的返回
+    if text.startswith("```"):
+
+        first_newline = text.find("\n")
+
+        if first_newline > 0:
+            text = text[first_newline + 1:]
+
+        if text.endswith("```"):
+            text = text[:-3]
+
+        text = text.strip()
+
+    return json.loads(text)
+
+
+def call_ai_json(client, system_prompt, user_prompt, model):
+
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt
         },
-        extra_body={
-            "thinking": {
-                "type": "disabled"
-            }
+        {
+            "role": "user",
+            "content": user_prompt
         }
-    )
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            response_format={
+                "type": "json_object"
+            }
+        )
+    except Exception as exc:
+        # 部分厂商不支持 JSON 输出模式（返回 400）时，降级为普通模式重试
+        if getattr(exc, "status_code", None) != 400:
+            raise
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages
+        )
 
     content = response.choices[0].message.content
 
     if not content:
         raise ValueError("AI 没有返回有效内容。")
 
-    return json.loads(content)
+    return parse_ai_json(content)
 
 
 # ==================================================
@@ -427,27 +531,19 @@ def chat(request: Request, payload: ChatRequest):
 
     try:
 
-        user_api_key = normalize_user_api_key(
-            request.headers.get("x-user-api-key")
-        )
+        provider_name, user_api_key, config = resolve_ai_context(request)
 
-        if request.headers.get("x-user-api-key") and not user_api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
-            )
+        client = get_ai_client(user_api_key, config)
 
-        client = get_ai_client(user_api_key)
+        create_kwargs = {
+            "model": config["model"],
+            "messages": messages
+        }
 
-        response = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=messages,
-            extra_body={
-                "thinking": {
-                    "type": "disabled"
-                }
-            }
-        )
+        if config.get("extra_body"):
+            create_kwargs["extra_body"] = config["extra_body"]
+
+        response = client.chat.completions.create(**create_kwargs)
 
         answer = response.choices[0].message.content
 
@@ -710,22 +806,15 @@ def generate_quiz(request: Request, payload: QuizRequest):
 
     try:
 
-        user_api_key = normalize_user_api_key(
-            request.headers.get("x-user-api-key")
-        )
+        provider_name, user_api_key, config = resolve_ai_context(request)
 
-        if request.headers.get("x-user-api-key") and not user_api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
-            )
-
-        client = get_ai_client(user_api_key)
+        client = get_ai_client(user_api_key, config)
 
         result = call_ai_json(
             client,
             "你是一名专业的大学学习测评教师。",
-            prompt
+            prompt,
+            config["model"]
         )
 
         questions = result.get("questions")
@@ -852,22 +941,15 @@ confidence 范围为0到1。
 
     try:
 
-        user_api_key = normalize_user_api_key(
-            request.headers.get("x-user-api-key")
-        )
+        provider_name, user_api_key, config = resolve_ai_context(request)
 
-        if request.headers.get("x-user-api-key") and not user_api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
-            )
-
-        client = get_ai_client(user_api_key)
+        client = get_ai_client(user_api_key, config)
 
         result = call_ai_json(
             client,
             "你是一名严谨的智能学习诊断系统。",
-            prompt
+            prompt,
+            config["model"]
         )
 
         diagnoses = result.get("diagnoses", [])
@@ -1055,17 +1137,9 @@ def generate_study_plan(request: Request, payload: StudyPlanRequest):
 
     try:
 
-        user_api_key = normalize_user_api_key(
-            request.headers.get("x-user-api-key")
-        )
+        provider_name, user_api_key, config = resolve_ai_context(request)
 
-        if request.headers.get("x-user-api-key") and not user_api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
-            )
-
-        client = get_ai_client(user_api_key)
+        client = get_ai_client(user_api_key, config)
 
         learning_data = {
             "答题记录": payload.records[-100:],
@@ -1133,7 +1207,8 @@ def generate_study_plan(request: Request, payload: StudyPlanRequest):
         plan = call_ai_json(
             client,
             "你是严谨的学习规划助手，只返回合法 JSON。",
-            prompt
+            prompt,
+            config["model"]
         )
 
         if not isinstance(plan, dict):

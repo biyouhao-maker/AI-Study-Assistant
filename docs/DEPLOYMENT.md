@@ -28,7 +28,7 @@ python -m venv .venv
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | 不再需要 | **V1.3.1 起为 BYOK 模式**：用户在网页"⚙ API 设置"里填自己的密钥，服务器不再配置密钥（Render 上可删除此变量） |
+| `DEEPSEEK_API_KEY` | 不再需要 | **V1.3.2 起为 BYOK 多厂商模式**：用户在网页"⚙ API 设置"里选择厂商（DeepSeek / Kimi / 通义千问 / 硅基流动 / 智谱 GLM / OpenRouter）并填对应密钥，服务器不再配置密钥（Render 上可删除此变量） |
 | `AI_RATE_LIMIT` | `10/minute` | AI 接口（chat/quiz/diagnose/study-plan）按 IP 限流 |
 | `UPLOAD_RATE_LIMIT` | `20/minute` | 上传接口限流 |
 | `ENABLE_DOCS` | `1` | API 文档开关，公网部署建议设 `0` |

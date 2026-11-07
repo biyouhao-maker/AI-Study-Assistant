@@ -81,6 +81,7 @@ async function apiRequest(path, options = {}) {
     if (userKey) {
         const headers = new Headers(options.headers || {});
         headers.set("X-User-API-Key", userKey);
+        headers.set("X-AI-Provider", getAiProvider());
         options.headers = headers;
     }
 
@@ -120,9 +121,53 @@ async function apiRequest(path, options = {}) {
 
 // localStorage 存储标识（这只是一个键名，不是密钥本身）
 const BYOK_STORAGE_ID = "ai-study-user-api-key";
+const BYOK_PROVIDER_ID = "ai-study-provider";
+
+const PROVIDER_LABELS = {
+    deepseek: "DeepSeek",
+    moonshot: "Kimi（月之暗面）",
+    qwen: "通义千问",
+    siliconflow: "硅基流动",
+    zhipu: "智谱 GLM",
+    openrouter: "OpenRouter"
+};
 
 function getUserApiKey() {
     return String(readStorage(BYOK_STORAGE_ID, "") || "").trim();
+}
+
+function getAiProvider() {
+    const provider = String(readStorage(BYOK_PROVIDER_ID, "") || "").trim();
+    return PROVIDER_LABELS[provider] ? provider : "deepseek";
+}
+
+// 按厂商校验密钥格式（与后端规则一致），通过则返回规整后的密钥
+function normalizeKeyForProvider(provider, rawValue) {
+
+    let value = String(rawValue || "").trim();
+
+    if (provider === "zhipu") {
+
+        const eq = value.indexOf("=");
+
+        if (eq >= 0) {
+            value = value.slice(eq + 1).trim();
+        }
+
+        return (value.length >= 16 && value.includes("."))
+            ? value
+            : null;
+    }
+
+    const marker = value.indexOf("sk-");
+
+    if (marker >= 0) {
+        value = value.slice(marker);
+    }
+
+    return (value.startsWith("sk-") && value.length >= 20)
+        ? value
+        : null;
 }
 
 function openApiKeyModal() {
@@ -131,7 +176,12 @@ function openApiKeyModal() {
     if (!modal) return;
 
     const input = document.getElementById("userApiKeyInput");
+    const select = document.getElementById("aiProviderSelect");
     const status = document.getElementById("apiKeyStatus");
+
+    if (select) {
+        select.value = getAiProvider();
+    }
 
     if (input && !input.value) {
         input.value = getUserApiKey();
@@ -139,8 +189,8 @@ function openApiKeyModal() {
 
     if (status) {
         status.textContent = getUserApiKey()
-            ? "当前已设置密钥，AI 调用将使用你自己的额度。"
-            : "尚未设置密钥。设置后才能使用 AI 对话、测验和学习计划。";
+            ? `当前使用 ${PROVIDER_LABELS[getAiProvider()] || getAiProvider()} 的密钥，AI 调用将使用你自己的额度。`
+            : "尚未设置密钥。选择厂商并填入对应密钥后，才能使用 AI 对话、测验和学习计划。";
     }
 
     modal.style.display = "flex";
@@ -156,24 +206,25 @@ function closeApiKeyModal() {
 
 function saveUserApiKey() {
     const input = document.getElementById("userApiKeyInput");
+    const select = document.getElementById("aiProviderSelect");
     const status = document.getElementById("apiKeyStatus");
 
     if (!input || !status) return;
 
-    let value = input.value.trim();
-    const marker = value.indexOf("sk-");
+    const provider = select ? select.value : "deepseek";
+    const normalized = normalizeKeyForProvider(provider, input.value);
 
-    if (marker > 0) {
-        value = value.slice(marker);
-    }
-
-    if (!value.startsWith("sk-") || value.length < 20) {
-        status.textContent = "密钥格式不正确：应以 sk- 开头且完整复制。";
+    if (!normalized) {
+        status.textContent = provider === "zhipu"
+            ? "智谱密钥格式不正确：应为 id.secret 形式（中间有一个点）。"
+            : "密钥格式不正确：应以 sk- 开头且完整复制。";
         return;
     }
 
-    writeStorage(BYOK_STORAGE_ID, value);
-    status.textContent = "已保存。AI 调用将使用你自己的 DeepSeek 额度。";
+    writeStorage(BYOK_STORAGE_ID, normalized);
+    writeStorage(BYOK_PROVIDER_ID, provider);
+
+    status.textContent = `已保存。AI 调用将使用 ${PROVIDER_LABELS[provider] || provider} 你自己的额度。`;
     setTimeout(closeApiKeyModal, 900);
 }
 

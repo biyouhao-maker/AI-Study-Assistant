@@ -869,10 +869,22 @@
     <div style="background:var(--surface); color:var(--text-primary); border-radius:var(--radius-lg); max-width:440px; width:90%; padding:26px; box-shadow:0 18px 50px rgba(0,0,0,0.25);">
         <h3 style="margin:0 0 10px; font-size:18px;">API 设置</h3>
         <p style="margin:0 0 14px; font-size:13px; line-height:1.7; color:var(--text-secondary);">
-            本站使用<strong>你自己的 DeepSeek API 密钥</strong>：密钥只保存在你当前浏览器的本地，AI 调用费用由你自己的账户承担。
-            获取密钥：<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener" style="color:var(--primary);">DeepSeek 开放平台</a>
+            本站使用<strong>你自己的 AI 厂商 API 密钥</strong>：密钥只保存在你当前浏览器的本地，AI 调用费用由你自己的账户承担。
+            支持六家厂商（选择后填对应家的密钥）：
+            DeepSeek / Kimi / 通义千问 / 硅基流动 / 智谱 GLM / OpenRouter
         </p>
-        <input id="userApiKeyInput" type="password" placeholder="sk-..."
+        <label for="aiProviderSelect" style="display:block; font-size:13px; color:var(--text-secondary); margin-bottom:6px;">AI 厂商</label>
+        <select id="aiProviderSelect"
+            style="width:100%; box-sizing:border-box; border:1px solid var(--border-strong); border-radius:var(--radius-sm); padding:10px 12px; font-size:14px; background:var(--surface-soft); color:var(--text-primary); margin-bottom:12px;">
+            <option value="deepseek">DeepSeek</option>
+            <option value="moonshot">Kimi（月之暗面）</option>
+            <option value="qwen">通义千问（阿里）</option>
+            <option value="siliconflow">硅基流动</option>
+            <option value="zhipu">智谱 GLM</option>
+            <option value="openrouter">OpenRouter</option>
+        </select>
+        <label for="userApiKeyInput" style="display:block; font-size:13px; color:var(--text-secondary); margin-bottom:6px;">API 密钥（到所选厂商的平台获取）</label>
+        <input id="userApiKeyInput" type="password" placeholder="粘贴你的密钥..."
             style="width:100%; box-sizing:border-box; border:1px solid var(--border-strong); border-radius:var(--radius-sm); padding:10px 12px; font-size:14px; background:var(--surface-soft); color:var(--text-primary);" />
         <p id="apiKeyStatus" style="margin:10px 0 0; font-size:13px; color:var(--text-secondary);"></p>
         <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px;">
