@@ -179,18 +179,34 @@ class StudyPlanRequest(BaseModel):
 # 3. DeepSeek API
 # ==================================================
 
-def get_ai_client():
+def normalize_user_api_key(raw_value):
 
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not raw_value:
+        return None
 
-    if not api_key:
+    value = raw_value.strip()
+
+    marker = value.find("sk-")
+
+    if marker >= 0:
+        value = value[marker:]
+
+    if not value.startswith("sk-") or len(value) < 20:
+        return None
+
+    return value
+
+
+def get_ai_client(user_api_key=None):
+
+    if not user_api_key:
         raise HTTPException(
-            status_code=500,
-            detail="未配置 DeepSeek API Key，请检查 backend/.env。"
+            status_code=401,
+            detail="请先在页面右上角“API 设置”中填入你自己的 DeepSeek API 密钥。"
         )
 
     return OpenAI(
-        api_key=api_key,
+        api_key=user_api_key,
         base_url="https://api.deepseek.com"
     )
 
@@ -411,7 +427,17 @@ def chat(request: Request, payload: ChatRequest):
 
     try:
 
-        client = get_ai_client()
+        user_api_key = normalize_user_api_key(
+            request.headers.get("x-user-api-key")
+        )
+
+        if request.headers.get("x-user-api-key") and not user_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
+            )
+
+        client = get_ai_client(user_api_key)
 
         response = client.chat.completions.create(
             model=AI_MODEL,
@@ -684,7 +710,17 @@ def generate_quiz(request: Request, payload: QuizRequest):
 
     try:
 
-        client = get_ai_client()
+        user_api_key = normalize_user_api_key(
+            request.headers.get("x-user-api-key")
+        )
+
+        if request.headers.get("x-user-api-key") and not user_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
+            )
+
+        client = get_ai_client(user_api_key)
 
         result = call_ai_json(
             client,
@@ -816,7 +852,17 @@ confidence 范围为0到1。
 
     try:
 
-        client = get_ai_client()
+        user_api_key = normalize_user_api_key(
+            request.headers.get("x-user-api-key")
+        )
+
+        if request.headers.get("x-user-api-key") and not user_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
+            )
+
+        client = get_ai_client(user_api_key)
 
         result = call_ai_json(
             client,
@@ -1009,7 +1055,17 @@ def generate_study_plan(request: Request, payload: StudyPlanRequest):
 
     try:
 
-        client = get_ai_client()
+        user_api_key = normalize_user_api_key(
+            request.headers.get("x-user-api-key")
+        )
+
+        if request.headers.get("x-user-api-key") and not user_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="API 密钥格式不正确，应以 sk- 开头。请在“API 设置”中重新填写。"
+            )
+
+        client = get_ai_client(user_api_key)
 
         learning_data = {
             "答题记录": payload.records[-100:],

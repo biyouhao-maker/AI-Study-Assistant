@@ -28,7 +28,7 @@ python -m venv .venv
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | 无（必填） | DeepSeek 密钥，只放在 `backend/.env`，绝不提交 Git |
+| `DEEPSEEK_API_KEY` | 不再需要 | **V1.3.1 起为 BYOK 模式**：用户在网页"⚙ API 设置"里填自己的密钥，服务器不再配置密钥（Render 上可删除此变量） |
 | `AI_RATE_LIMIT` | `10/minute` | AI 接口（chat/quiz/diagnose/study-plan）按 IP 限流 |
 | `UPLOAD_RATE_LIMIT` | `20/minute` | 上传接口限流 |
 | `ENABLE_DOCS` | `1` | API 文档开关，公网部署建议设 `0` |
@@ -88,8 +88,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-
    - Build Command: `pip install -r requirements.txt`
    - Start Command: 来自 Procfile（`uvicorn backend.main:app --host 0.0.0.0 --port $PORT ...`）
 4. **环境变量**（在 Render 后台填写，绝不写进仓库）：
-   - `DEEPSEEK_API_KEY` = 你的真实密钥
    - `ENABLE_DOCS` = `0`
+   - （V1.3.1 起为 BYOK 模式，`DEEPSEEK_API_KEY` 不再需要；如已配置可删除）
 5. **Create Web Service** → 等待构建完成 → 得到 `https://<名称>.onrender.com`
 6. 以后每次 `git push`，平台自动重新部署
 

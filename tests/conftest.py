@@ -17,9 +17,21 @@ if str(BACKEND_DIR) not in sys.path:
 
 import main  # noqa: E402
 
+DEFAULT_TEST_KEY = "sk-" + "a" * 32
 
-def make_fake_client(content):
-    """构造假 DeepSeek 客户端：create() 返回固定 content，不发真实网络请求。"""
+AI_ENDPOINTS = (
+    "/api/chat",
+    "/api/quiz",
+    "/api/diagnose",
+    "/api/study-plan",
+)
+
+
+def make_fake_client(api_key=None, content='{"reply": "ok"}'):
+    """构造假 DeepSeek 客户端：记录传入的 api_key，create() 返回固定内容，不发真实网络请求。"""
+
+    client = type("Client", (), {})()
+    client._api_key_used = api_key
 
     msg = type("Msg", (), {"content": content})()
     resp = type(
@@ -31,11 +43,26 @@ def make_fake_client(content):
     completions = type("Completions", (), {})()
     completions.create = lambda **kwargs: resp
 
-    client = type("Client", (), {})()
     client.chat = type("Chat", (), {})()
     client.chat.completions = completions
 
     return client
+
+
+class KeyedTestClient(TestClient):
+    """自动为 AI 接口注入测试密钥头，模拟前端 BYOK 行为。"""
+
+    def request(self, method, url, **kwargs):
+
+        headers = dict(kwargs.pop("headers", None) or {})
+
+        if (
+            any(url.startswith(prefix) for prefix in AI_ENDPOINTS)
+            and "X-User-API-Key" not in headers
+        ):
+            headers["X-User-API-Key"] = DEFAULT_TEST_KEY
+
+        return super().request(method, url, headers=headers, **kwargs)
 
 
 @pytest.fixture()
@@ -47,6 +74,7 @@ def make_client(monkeypatch):
         c = make_client(ai_content="<内容>")     # 指定 AI 返回内容
         c = make_client(env={"AI_RATE_LIMIT": "3/second"})
     每次调用都重新加载 main：限流计数归零、环境变量即时生效。
+    BYOK：真实 get_ai_client / normalize 逻辑参与运行，OpenAI 类被替换为假客户端。
     """
 
     def _make(ai_content='{"reply": "ok"}', env=None):
@@ -56,10 +84,16 @@ def make_client(monkeypatch):
                 monkeypatch.setenv(key, value)
 
         importlib.reload(main)
+
         monkeypatch.setattr(
-            main, "get_ai_client", lambda: make_fake_client(ai_content)
+            main,
+            "OpenAI",
+            lambda **kwargs: make_fake_client(
+                api_key=kwargs.get("api_key"),
+                content=ai_content,
+            ),
         )
 
-        return TestClient(main.app)
+        return KeyedTestClient(main.app)
 
     yield _make

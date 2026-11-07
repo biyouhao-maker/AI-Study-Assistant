@@ -76,6 +76,14 @@ function formatDate(value) {
 }
 
 async function apiRequest(path, options = {}) {
+    const userKey = getUserApiKey();
+
+    if (userKey) {
+        const headers = new Headers(options.headers || {});
+        headers.set("X-User-API-Key", userKey);
+        options.headers = headers;
+    }
+
     const response = await fetch(`${API_BASE}${path}`, options);
 
     const contentType = response.headers.get("content-type") || "";
@@ -91,6 +99,10 @@ async function apiRequest(path, options = {}) {
     }
 
     if (!response.ok) {
+        if (response.status === 401) {
+            openApiKeyModal();
+        }
+
         throw new Error(
             data?.detail ||
             data?.error ||
@@ -100,6 +112,94 @@ async function apiRequest(path, options = {}) {
     }
 
     return data;
+}
+
+/* =========================================
+   一之二、用户自带 API 密钥（BYOK）
+========================================= */
+
+// localStorage 存储标识（这只是一个键名，不是密钥本身）
+const BYOK_STORAGE_ID = "ai-study-user-api-key";
+
+function getUserApiKey() {
+    return String(readStorage(BYOK_STORAGE_ID, "") || "").trim();
+}
+
+function openApiKeyModal() {
+    const modal = document.getElementById("apiKeyModal");
+
+    if (!modal) return;
+
+    const input = document.getElementById("userApiKeyInput");
+    const status = document.getElementById("apiKeyStatus");
+
+    if (input && !input.value) {
+        input.value = getUserApiKey();
+    }
+
+    if (status) {
+        status.textContent = getUserApiKey()
+            ? "当前已设置密钥，AI 调用将使用你自己的额度。"
+            : "尚未设置密钥。设置后才能使用 AI 对话、测验和学习计划。";
+    }
+
+    modal.style.display = "flex";
+}
+
+function closeApiKeyModal() {
+    const modal = document.getElementById("apiKeyModal");
+
+    if (modal) {
+        modal.style.display = "none";
+    }
+}
+
+function saveUserApiKey() {
+    const input = document.getElementById("userApiKeyInput");
+    const status = document.getElementById("apiKeyStatus");
+
+    if (!input || !status) return;
+
+    let value = input.value.trim();
+    const marker = value.indexOf("sk-");
+
+    if (marker > 0) {
+        value = value.slice(marker);
+    }
+
+    if (!value.startsWith("sk-") || value.length < 20) {
+        status.textContent = "密钥格式不正确：应以 sk- 开头且完整复制。";
+        return;
+    }
+
+    writeStorage(BYOK_STORAGE_ID, value);
+    status.textContent = "已保存。AI 调用将使用你自己的 DeepSeek 额度。";
+    setTimeout(closeApiKeyModal, 900);
+}
+
+const apiKeySettingsBtn = document.getElementById("apiKeySettingsBtn");
+const closeApiKeyModalBtn = document.getElementById("closeApiKeyModalBtn");
+const saveUserApiKeyBtn = document.getElementById("saveUserApiKeyBtn");
+const apiKeyModal = document.getElementById("apiKeyModal");
+
+if (apiKeySettingsBtn) {
+    apiKeySettingsBtn.addEventListener("click", openApiKeyModal);
+}
+
+if (closeApiKeyModalBtn) {
+    closeApiKeyModalBtn.addEventListener("click", closeApiKeyModal);
+}
+
+if (saveUserApiKeyBtn) {
+    saveUserApiKeyBtn.addEventListener("click", saveUserApiKey);
+}
+
+if (apiKeyModal) {
+    apiKeyModal.addEventListener("click", event => {
+        if (event.target === apiKeyModal) {
+            closeApiKeyModal();
+        }
+    });
 }
 
 function setButtonLoading(button, loading, loadingText, normalText) {
