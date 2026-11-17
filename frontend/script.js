@@ -119,7 +119,7 @@ async function apiRequest(path, options = {}) {
    一之二、用户自带 API 密钥（BYOK）
 ========================================= */
 
-// localStorage 存储标识（这只是一个键名，不是密钥本身）
+// BYOK：API 密钥与厂商选择仅保存在本机 localStorage，不经过服务器
 const BYOK_STORAGE_ID = "ai-study-user-api-key";
 const BYOK_PROVIDER_ID = "ai-study-provider";
 

@@ -22,3 +22,7 @@ uploads/
 Thumbs.db
 .idea/
 .vscode/
+
+# ===== 旧版本备份与工具产物（不入库）=====
+backup-v1.2/
+.mimosa/

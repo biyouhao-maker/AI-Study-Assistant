@@ -305,7 +305,25 @@ def parse_ai_json(content):
 
         text = text.strip()
 
-    return json.loads(text)
+    try:
+        return json.loads(text)
+
+    except json.JSONDecodeError:
+        # 兜底：返回内容在 JSON 前后夹杂说明文字时，提取首个代码块再试一次
+        fence_start = text.find("```")
+
+        if fence_start < 0:
+            raise
+
+        block_start = text.find("\n", fence_start)
+        fence_end = text.find("```", fence_start + 3)
+
+        if block_start < 0 or fence_end <= block_start:
+            raise
+
+        candidate = text[block_start + 1:fence_end].strip()
+
+        return json.loads(candidate)
 
 
 def call_ai_json(client, system_prompt, user_prompt, model):
@@ -876,7 +894,7 @@ def generate_quiz(request: Request, payload: QuizRequest):
 
 
 # ==================================================
-# 10. 错题智能归类
+# 9. 错题智能归类
 # ==================================================
 
 @app.post("/api/diagnose")
@@ -993,7 +1011,7 @@ confidence 范围为0到1。
 
 
 # ==================================================
-# 11. 知识点掌握度统计
+# 10. 知识点掌握度统计
 # ==================================================
 
 def calculate_knowledge_stats(records):
@@ -1071,7 +1089,7 @@ async def knowledge_stats(request: KnowledgeStatsRequest):
 
 
 # ==================================================
-# 12. 个性化学习建议
+# 11. 个性化学习建议
 # ==================================================
 
 @app.post("/api/recommendations")
@@ -1128,7 +1146,7 @@ async def learning_recommendations(request: KnowledgeStatsRequest):
 
 
 # ==================================================
-# 13. AI 个性化学习计划
+# 12. AI 个性化学习计划
 # ==================================================
 
 @app.post("/api/study-plan")
